@@ -1,0 +1,11 @@
+[package]
+name = "code_submission_backend"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+axum = "0.7.5"
+http = "1.1.0"
+serde = { version = "1.0.203", features = ["derive"] }
+tokio = {  version = "1.38.0" , features = ["full"] }
+tracing-subscriber = "0.3.18"
