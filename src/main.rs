@@ -47,10 +47,22 @@ async fn run_code(Json(payload): Json<CreateCode>) -> (StatusCode, Json<Output>)
         .unwrap();
 
     io::stdout().write_all(&output.stdout).unwrap();
-    io::stderr().write_all(&output.stderr).unwrap(); // Use output.status for error
+    io::stderr().write_all(&output.stderr).unwrap();
+
+    let output_message = if output.status.success() {
+                                      output.stdout
+                                  } else {
+                                      output.stderr
+                                  };
+
+    // Remove docker working directory if present
+    let filtered_output = String::from_utf8(output_message)
+        .unwrap()
+        .split(docker_working_directory)
+        .collect::<String>();
 
     let result = Output {
-        output: String::from_utf8(output.stdout).unwrap(),
+        output: filtered_output,
     };
 
     (StatusCode::OK, Json(result))
