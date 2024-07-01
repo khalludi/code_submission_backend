@@ -30,24 +30,24 @@ async fn root() -> &'static str {
 }
 
 async fn run_code(Json(payload): Json<CreateCode>) -> (StatusCode, Json<Output>) {
-    println!("{:?}", payload);
-
-    let mut file = File::create("test.py").expect("unable to create file");
+    let input_filename = "test.py";
+    let mut file = File::create(input_filename).expect("unable to create file");
     file.write_all(payload.code.as_bytes()).expect("could not write code to file");
 
-    let mut process = Command::new("docker")
-        .args(["build", "-t", "test-py", "."])
-        .spawn()
-        .unwrap();
-    process.wait().unwrap();
+    let path = std::env::current_dir().unwrap();
+    let docker_working_directory = "/usr/src/myapp";
+    let volume_mapping = format!("{}:{}", path.display(), docker_working_directory);
 
     let output = Command::new("docker")
-        .args(["run", "test-py"])
+        .arg("run")
+        .args(["-v", volume_mapping.as_str()])
+        .args(["-w", docker_working_directory])
+        .args(["python:3", "python", input_filename])
         .output()
         .unwrap();
-    println!("status: {}", output.status);
+
     io::stdout().write_all(&output.stdout).unwrap();
-    io::stderr().write_all(&output.stderr).unwrap();
+    io::stderr().write_all(&output.stderr).unwrap(); // Use output.status for error
 
     let result = Output {
         output: String::from_utf8(output.stdout).unwrap(),
