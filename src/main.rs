@@ -34,7 +34,7 @@ async fn root() -> &'static str {
 }
 
 async fn run_code(Json(payload): Json<CreateCode>) -> (StatusCode, Json<Output>) {
-    println!("{:?}", payload);
+    // println!("{:?}", payload);
 
     let input_filename = "test.py";
     let mut file = File::create(input_filename).expect("unable to create file");
@@ -43,6 +43,13 @@ async fn run_code(Json(payload): Json<CreateCode>) -> (StatusCode, Json<Output>)
     let path = std::env::current_dir().unwrap();
     let docker_working_directory = "/usr/src/myapp";
     let volume_mapping = format!("{}:{}", path.display(), docker_working_directory);
+
+    let mut results_map: HashMap<String, String> = HashMap::new();
+    for (key, test_case) in payload.test_cases.into_iter() {
+        let grader_output = call_grader(&test_case);
+        results_map.insert(key, String::from_utf8(grader_output).unwrap());
+    }
+    println!("{:?}", results_map);
 
     let output = Command::new("docker")
         .arg("run")
@@ -69,9 +76,35 @@ async fn run_code(Json(payload): Json<CreateCode>) -> (StatusCode, Json<Output>)
 
     let result = Output {
         output: filtered_output,
+        grader_output: results_map
     };
 
     (StatusCode::OK, Json(result))
+}
+
+fn call_grader(test_case: &TestCase) -> Vec<u8> {
+    let path = std::env::current_dir().unwrap();
+    let docker_working_directory = "/usr/src/myapp";
+    let volume_mapping = format!("{}:{}", path.display(), docker_working_directory);
+
+    let output = Command::new("docker")
+        .arg("run")
+        .args(["-v", volume_mapping.as_str()])
+        .args(["-w", docker_working_directory])
+        .args(["python:3", "python", "grader.py", test_case.num_courses.as_str(), test_case.prerequisites.as_str()])
+        .output()
+        .unwrap();
+
+    io::stdout().write_all(&output.stdout).unwrap();
+    io::stderr().write_all(&output.stderr).unwrap();
+
+    let output_message = if output.status.success() {
+        output.stdout
+    } else {
+        output.stderr
+    };
+
+    return output_message;
 }
 
 #[derive(Deserialize, Debug)]
@@ -85,28 +118,12 @@ struct CreateCode {
 struct TestCase {
     #[serde(rename = "numCourses")]
     num_courses: String,
-    //#[serde(deserialize_with = "json_from_str")]
     prerequisites: String,
 }
 
 #[derive(Serialize, Debug)]
 struct Output {
     output: String,
-}
-
-fn primitive_from_str<'de, T, D>(deserializer: D) -> Result<T, D::Error>
-    where T: FromStr,
-          T::Err: Display,
-          D: Deserializer<'de>
-{
-    let s = String::deserialize(deserializer)?;
-    T::from_str(&s).map_err(de::Error::custom)
-}
-
-fn json_from_str<'de, T, D>(deserializer: D) -> Result<T, D::Error>
-    where T: DeserializeOwned,
-          D: Deserializer<'de>
-{
-    let s = String::deserialize(deserializer)?;
-    serde_json::from_str(&s).map_err(de::Error::custom)
+    #[serde(rename = "graderOutput")]
+    grader_output: HashMap<String, String>,
 }
