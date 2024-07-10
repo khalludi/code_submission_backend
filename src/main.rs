@@ -1,3 +1,5 @@
+mod python_runner;
+
 use std::collections::HashMap;
 use std::fmt::Display;
 use axum::{
@@ -6,12 +8,11 @@ use axum::{
     Json, Router,
 };
 use serde::{de, Deserialize, Deserializer, Serialize};
-use std::process::Command;
 use std::fs::File;
-use std::io;
-use std::io::Write;
+use std::io::{BufRead, BufReader, Read, Write};
 use std::str::FromStr;
 use serde::de::DeserializeOwned;
+use crate::python_runner::PythonRunner;
 
 #[tokio::main]
 async fn main() {
@@ -34,77 +35,36 @@ async fn root() -> &'static str {
 }
 
 async fn run_code(Json(payload): Json<CreateCode>) -> (StatusCode, Json<Output>) {
-    // println!("{:?}", payload);
-
     let input_filename = "test.py";
     let mut file = File::create(input_filename).expect("unable to create file");
     file.write_all(payload.code.as_bytes()).expect("could not write code to file");
 
-    let path = std::env::current_dir().unwrap();
-    let docker_working_directory = "/usr/src/myapp";
-    let volume_mapping = format!("{}:{}", path.display(), docker_working_directory);
+    let user_addon_filename = "user_addon.py";
+    let file2 = File::open(user_addon_filename).expect("could not open user addon file");
+    let mut reader = BufReader::new(file2);
 
-    let mut results_map: HashMap<String, String> = HashMap::new();
-    for (key, test_case) in payload.test_cases.into_iter() {
-        let grader_output = call_grader(&test_case);
-        results_map.insert(key, String::from_utf8(grader_output).unwrap());
+    for line in reader.lines().map(|l| l.unwrap()) {
+        writeln!(file, "{}", line).unwrap();
     }
-    println!("{:?}", results_map);
 
-    let output = Command::new("docker")
-        .arg("run")
-        .args(["-v", volume_mapping.as_str()])
-        .args(["-w", docker_working_directory])
-        .args(["python:3", "python", input_filename])
-        .output()
-        .unwrap();
+    let mut grader_map: HashMap<String, String> = HashMap::new();
+    let mut user_map: HashMap<String, String> = HashMap::new();
+    for (key, test_case) in payload.test_cases.into_iter() {
+        let judge_runner = PythonRunner::new("grader.py");
+        grader_map.insert(key.clone(), judge_runner.run(&test_case));
 
-    io::stdout().write_all(&output.stdout).unwrap();
-    io::stderr().write_all(&output.stderr).unwrap();
-
-    let output_message = if output.status.success() {
-                                      output.stdout
-                                  } else {
-                                      output.stderr
-                                  };
-
-    // Remove docker working directory if present
-    let filtered_output = String::from_utf8(output_message)
-        .unwrap()
-        .split(docker_working_directory)
-        .collect::<String>();
+        let user_runner = PythonRunner::new(input_filename);
+        user_map.insert(key, user_runner.run(&test_case));
+    }
+    println!("{:?}", user_map);
+    println!("{:?}", grader_map);
 
     let result = Output {
-        output: filtered_output,
-        grader_output: results_map
+        user_output: user_map,
+        grader_output: grader_map
     };
 
     (StatusCode::OK, Json(result))
-}
-
-fn call_grader(test_case: &TestCase) -> Vec<u8> {
-    let path = std::env::current_dir().unwrap();
-    let docker_working_directory = "/usr/src/myapp";
-    let volume_mapping = format!("{}:{}", path.display(), docker_working_directory);
-
-    let output = Command::new("docker")
-        .arg("run")
-        .args(["-v", volume_mapping.as_str()])
-        .args(["-w", docker_working_directory])
-        .args(["python:3", "python", "grader.py", test_case.num_courses.as_str(), test_case.prerequisites.as_str()])
-        .output()
-        .unwrap();
-
-    io::stdout().write_all(&output.stdout).unwrap();
-    io::stderr().write_all(&output.stderr).unwrap();
-
-    let output_message = if output.status.success() {
-        output.stdout
-    } else {
-        output.stderr
-    };
-
-    return output_message;
 }
 
 #[derive(Deserialize, Debug)]
@@ -123,7 +83,8 @@ struct TestCase {
 
 #[derive(Serialize, Debug)]
 struct Output {
-    output: String,
+    #[serde(rename = "userOutput")]
+    user_output: HashMap<String, String>,
     #[serde(rename = "graderOutput")]
     grader_output: HashMap<String, String>,
 }

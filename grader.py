@@ -1,5 +1,30 @@
+from collections import *
+
 class Grader:
-    def solve(self, numCourses, prereqs):
+    def solve(self, numCourses, prerequisites):
+        indegrees = [0 for _ in range(numCourses)]
+        adjList = defaultdict(list)
+        for post, pre in prerequisites:
+          adjList[pre].append(post)
+          indegrees[post] += 1
+
+        q = deque()
+        for i in range(numCourses):
+          if indegrees[i] == 0:
+            q.append(i)
+
+        while q:
+          curr = q.pop()
+
+          for c in adjList[curr]:
+            indegrees[c] -= 1
+            if indegrees[c] == 0:
+              q.append(c)
+
+        for c in indegrees:
+          if c > 0:
+            return False
+
         return True
 
 # Receive inputs from command line
@@ -16,5 +41,4 @@ for a, b in reg2.findall(strPreReq):
 
 # Call grader and print output
 g = Grader()
-g_out = g.solve(12, 15)
-print(g_out)
+print(g.solve(numCourses, prereqs))
